@@ -2,7 +2,7 @@
  * Copyright (C) Ambroz Bizjak <ambrop7@gmail.com>
  * Contributions:
  * Transparent DNS: Copyright (C) Kerem Hadimli <kerem.hadimli@gmail.com>
- * 
+ *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
  * 1. Redistributions of source code must retain the above copyright
@@ -13,7 +13,7 @@
  * 3. Neither the name of the author nor the
  *    names of its contributors may be used to endorse or promote products
  *    derived from this software without specific prior written permission.
- * 
+ *
  * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
  * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
  * WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
@@ -32,8 +32,15 @@
 #include <misc/debug.h>
 #include <base/DebugObject.h>
 #include <system/BReactor.h>
-#include <udpgw_client/UdpGwClient.h>
-#include <socksclient/BSocksClient.h>
+#include <protocol/udpgw_proto.h>
+#include <protocol/packetproto.h>
+#include <system/BDatagram.h>
+#include <flow/PacketBuffer.h>
+#include <flow/SinglePacketBuffer.h>
+#include <flow/BufferWriter.h>
+#include <structure/BAVL.h>
+#include <structure/LinkedList1.h>
+#include <misc/offset.h>
 
 typedef void (*SocksUdpGwClient_handler_received) (void *user, BAddr local_addr, BAddr remote_addr, const uint8_t *data, int data_len);
 
@@ -46,13 +53,33 @@ typedef struct {
     BReactor *reactor;
     void *user;
     SocksUdpGwClient_handler_received handler_received;
-    UdpGwClient udpgw_client;
-    BTimer reconnect_timer;
-    int have_socks;
-    BSocksClient socks_client;
-    int socks_up;
+    int udpgw_mtu;
+    int num_connections;
+    int max_connections;
+    BAVL connections_tree;
+    LinkedList1 connections_list;
     DebugObject d_obj;
 } SocksUdpGwClient;
+
+typedef struct {
+    BAddr local_addr;
+    BAddr remote_addr;
+} SocksUdpGwClient_conaddr;
+
+typedef struct {
+    SocksUdpGwClient *client;
+    SocksUdpGwClient_conaddr conaddr;
+    BPending first_job;
+    const uint8_t *first_data;
+    int first_data_len;
+    BDatagram udp_dgram;
+    BufferWriter udp_send_writer;
+    PacketBuffer udp_send_buffer;
+    SinglePacketBuffer udp_recv_buffer;
+    PacketPassInterface udp_recv_if;
+    BAVLNode connections_tree_node;
+    LinkedList1Node connections_list_node;
+} SocksUdpGwClient_connection;
 
 int SocksUdpGwClient_Init (SocksUdpGwClient *o, int udp_mtu, int max_connections, int send_buffer_size, btime_t keepalive_time,
                            BAddr socks_server_addr, const struct BSocksClient_auth_info *auth_info, size_t num_auth_info,
